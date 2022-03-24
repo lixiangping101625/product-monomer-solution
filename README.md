@@ -76,11 +76,11 @@
              并发场景只有获得锁的线程进行上述原子性操作，操作完成后释放锁，再由其他获得该锁的线程进行该原子性操作。
              
     解决方案：Java关键字synchronized
-        1、方法加锁：只有当前线程释放锁后，其他线程才可以执行该方法
-            /**
-             * 在没有加锁的情况下，5个线程同时执行，查询到商品库存均为1，所以会创建5个订单
-             * 方法加锁，
-             */
+        方法加锁 + @Transactional(rollbackFor = Exception.class) 测试事务：
+            理想目标：只有当前线程释放锁后，其他线程才可以执行该方法
+            结果：由于事务原因导致依然存在超卖现象！！
+            原因：上一个事务未提交，导致下一个执行线程查询库存任然为1.
+            
             @Transactional(rollbackFor = Exception.class)
             public synchronized void orderPlace() {
                 //1、查询库存
@@ -99,3 +99,49 @@
                 新增订单、新增订单详情
                 ...
             }    
+        
+         "方法加锁synchronized + 手动事务" 解决才能真正解决超卖问题
+            @Autowired
+            private PlatformTransactionManager transactionManager;
+            @Autowired
+            TransactionDefinition transactionDefinition;
+        
+            public synchronized void orderPlace() {
+                //手动开启事务！
+                TransactionStatus transactionStatus = transactionManager.getTransaction(transactionDefinition);
+                //1、查询库存
+                TProduct product = productRepository.getById(purchaseProductId);
+                if (product==null) {
+                    //事务回滚
+                    transactionManager.rollback(transactionStatus);
+                    throw new RuntimeException("商品不存在");
+                }
+                Integer currentCount = product.getCount();
+                //2、库存校验&修改库存
+                if (purchaseProductCount > currentCount) {
+                    //事务回滚
+                    transactionManager.rollback(transactionStatus);
+                    throw new RuntimeException("商品仅剩" + currentCount + " 件，无法购买~");
+                }
+                Integer leftCount = currentCount - purchaseProductCount;
+                //3、更新库存（如果采用增量方式修改商品库存，就会出现库存为负数的场景。这里是直接修改库存，所以尽管商品库存正常（0），但实际上是创建了5个订单，还是超卖）
+                product.setCount(leftCount);
+                TProduct saveProduct = productRepository.save(product);
+        
+                //4、新增订单
+                TOrder order = new TOrder();
+                order.setPrice(product.getPrice().multiply(BigDecimal.valueOf(purchaseProductCount)));
+                order.setTitle("测试订单");
+                TOrder saveOrder = orderRepository.save(order);
+                //5、新增订单详情
+                TOrderItem orderItem = new TOrderItem();
+                orderItem.setCount(purchaseProductCount);
+                orderItem.setOrderId(saveOrder.getId());
+                orderItem.setProductId(purchaseProductId);
+                TOrderItem saveOrderItem = orderItemRepository.save(orderItem);
+        
+                System.out.println("下单成功，订单id：" + saveOrder.getId());
+        
+                //提交事务
+                transactionManager.commit(transactionStatus);
+            } 

@@ -72,7 +72,7 @@ public class OrderService {
 
 
     /////////////////////////////////////////////////////////////
-    //////synchronized + 手动事务 实现并发场景对资源加锁
+    //////synchronized方法 + 手动事务 实现并发场景对资源加锁
     ////////////////////////////////////////////////////////////
 
     @Autowired
@@ -83,17 +83,18 @@ public class OrderService {
     public synchronized void orderPlace() {
         //手动开启事务！
         TransactionStatus transactionStatus = transactionManager.getTransaction(transactionDefinition);
+
         //1、查询库存
         TProduct product = productRepository.getById(purchaseProductId);
         if (product==null) {
-            //事务回滚
+            //异常事务回滚
             transactionManager.rollback(transactionStatus);
             throw new RuntimeException("商品不存在");
         }
         Integer currentCount = product.getCount();
         //2、库存校验&修改库存
         if (purchaseProductCount > currentCount) {
-            //事务回滚
+            //异常事务回滚
             transactionManager.rollback(transactionStatus);
             throw new RuntimeException("商品仅剩" + currentCount + " 件，无法购买~");
         }
