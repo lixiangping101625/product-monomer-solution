@@ -74,13 +74,14 @@ public class OrderService {
     /////////////////////////////////////////////////////////////
     //////synchronized方法 + 手动事务 实现并发场景对资源加锁
     ////////////////////////////////////////////////////////////
-
     @Autowired
     private PlatformTransactionManager transactionManager;
     @Autowired
     TransactionDefinition transactionDefinition;
-
-    public synchronized void orderPlace() {
+    /**
+     * 方法加锁+手动事务 解决超卖问题
+     */
+/*    public synchronized void orderPlace() {
         //手动开启事务！
         TransactionStatus transactionStatus = transactionManager.getTransaction(transactionDefinition);
 
@@ -117,6 +118,58 @@ public class OrderService {
 
         System.out.println("下单成功，订单id：" + saveOrder.getId());
 
+        //提交事务
+        transactionManager.commit(transactionStatus);
+    }*/
+
+    /**
+     * synchronized(){代码块：主要造成库存充足假象的代码块} + 手动事务  解决超卖问题：
+     *      synchronized (this){代码块} 和 synchronized (当前类对象属性){代码块} 一样，因为Springboot默认是单例的。这里示例就采用synchronized (this){代码块}的方式。
+     *      synchronized (当前类){代码块} 最安全。因为类只有一个，而对象特殊情况下可能会创建多个，所以不是太安全。
+     */
+    public void orderPlace() {
+        TProduct product = null;
+        synchronized (this){
+            //手动开启事务！
+            TransactionStatus transactionStatus1 = transactionManager.getTransaction(transactionDefinition);
+            //1、查询库存
+            product = productRepository.getById(purchaseProductId);
+            if (product==null) {
+                //异常事务回滚
+                transactionManager.rollback(transactionStatus1);
+                throw new RuntimeException("商品不存在");
+            }
+            Integer currentCount = product.getCount();
+            //2、库存校验&修改库存
+            if (purchaseProductCount > currentCount) {
+                //异常事务回滚
+                transactionManager.rollback(transactionStatus1);
+                throw new RuntimeException("商品仅剩" + currentCount + " 件，无法购买~");
+            }
+            Integer leftCount = currentCount - purchaseProductCount;
+            //3、更新库存（如果采用增量方式修改商品库存，就会出现库存为负数的场景。这里是直接修改库存，所以尽管商品库存正常（0），但实际上是创建了5个订单，还是超卖）
+            product.setCount(leftCount);
+            TProduct saveProduct = productRepository.save(product);
+
+            transactionManager.commit(transactionStatus1);
+        }
+        /*
+         * 精良避免事务嵌套！！！
+         */
+        //手动开启事务！
+        TransactionStatus transactionStatus = transactionManager.getTransaction(transactionDefinition);
+        //4、新增订单
+        TOrder order = new TOrder();
+        order.setPrice(product.getPrice().multiply(BigDecimal.valueOf(purchaseProductCount)));
+        order.setTitle("测试订单");
+        TOrder saveOrder = orderRepository.save(order);
+        //5、新增订单详情
+        TOrderItem orderItem = new TOrderItem();
+        orderItem.setCount(purchaseProductCount);
+        orderItem.setOrderId(saveOrder.getId());
+        orderItem.setProductId(purchaseProductId);
+        TOrderItem saveOrderItem = orderItemRepository.save(orderItem);
+        System.out.println("下单成功，订单id：" + saveOrder.getId());
         //提交事务
         transactionManager.commit(transactionStatus);
     }
