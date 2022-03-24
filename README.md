@@ -179,7 +179,7 @@
                     transactionManager.commit(transactionStatus1);
                 }
                 /*
-                 * 精良避免事务嵌套！！！
+                 * 尽量避免事务嵌套！！！
                  */
                 //手动开启事务！
                 TransactionStatus transactionStatus = transactionManager.getTransaction(transactionDefinition);
